@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Hand Detection</title>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
+    <style>
+        canvas { 
+            transform: scaleX(-1);
+            width: 100%;
+            max-width: 800px;
+            margin: 0 auto;
+            display: block;
+        }
+        .container {
+            text-align: center;
+            margin: 20px;
+        }
+        #status {
+            margin: 10px;
+            padding: 10px;
+            background: rgba(0,0,0,0.7);
+            color: white;
+            border-radius: 5px;
+            display: inline-block;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <button id="startBtn">Start Camera</button>
+        <button id="stopBtn" style="display:none">Stop Camera</button>
+        <div id="status"></div>
+    </div>
+    <canvas id="output"></canvas>
+    <video id="video" style="display: none"></video>
+
+    <script>
+        const videoElement = document.getElementById('video');
+        const canvasElement = document.getElementById('output');
+        const statusDiv = document.getElementById('status');
+        const startBtn = document.getElementById('startBtn');
+        const stopBtn = document.getElementById('stopBtn');
+        const canvasCtx = canvasElement.getContext('2d');
+
+        function onResults(results) {
+            canvasCtx.save();
+            canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+            canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+
+            if (results.multiHandLandmarks) {
+                statusDiv.textContent = `Hands detected: ${results.multiHandLandmarks.length}`;
+                for (const landmarks of results.multiHandLandmarks) {
+                    drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS,
+                        {color: '#00FF00', lineWidth: 5});
+                    drawLandmarks(canvasCtx, landmarks, {
+                        color: '#FF0000',
+                        lineWidth: 2,
+                        radius: 3
+                    });
+                }
+            } else {
+                statusDiv.textContent = 'No hands detected';
+            }
+            canvasCtx.restore();
+        }
+
+        const hands = new Hands({
+            locateFile: (file) => {
+                return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+            }
+        });
+        hands.setOptions({
+            maxNumHands: 2,
+            modelComplexity: 1,
+            minDetectionConfidence: 0.5,
+            minTrackingConfidence: 0.5
+        });
+        hands.onResults(onResults);
+
+        startBtn.onclick = async () => {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+                videoElement.srcObject = stream;
+                videoElement.play();
+                startBtn.style.display = 'none';
+                stopBtn.style.display = 'inline-block';
+                const camera = new Camera(videoElement, {
+                    onFrame: async () => {
+                        await hands.send({image: videoElement});
+                    },
+                    width: 1280,
+                    height: 720
+                });
+                camera.start();
+            } catch (error) {
+                console.error(error);
+                statusDiv.textContent = 'Error accessing camera';
+            }
+        };
+
+        stopBtn.onclick = () => {
+            const stream = videoElement.srcObject;
+            const tracks = stream.getTracks();
+            tracks.forEach(track => track.stop());
+            videoElement.srcObject = null;
+            startBtn.style.display = 'inline-block';
+            stopBtn.style.display = 'none';
+            canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+            statusDiv.textContent = '';
+        };
+
+        canvasElement.width = 1280;
+        canvasElement.height = 720;
+    </script>
+</body>
+</html>
