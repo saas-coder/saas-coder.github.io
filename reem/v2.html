@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html dir="rtl" lang="ar">
+<head>
+    <meta charset="UTF-8">
+    <title>نظام كشف الحالة بإشارات اليد</title>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;700&display=swap');
+        body {
+            font-family: 'Cairo', sans-serif;
+            text-align: center;
+            background: #f0f2f5;
+        }
+        canvas { 
+            transform: scaleX(-1);
+            width: 100%;
+            max-width: 800px;
+            margin: 20px auto;
+            display: block;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        .container {
+            margin: 20px;
+        }
+        #symbol {
+            font-size: 48px;
+            margin: 20px;
+            padding: 20px;
+            border-radius: 15px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            transition: all 0.3s ease;
+        }
+        .safe {
+            background: #4CAF50;
+            color: white;
+        }
+        .danger {
+            background: #f44336;
+            color: white;
+            animation: pulse 1s infinite;
+        }
+        @keyframes pulse {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.05); }
+            100% { transform: scale(1); }
+        }
+        #guide {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 10px;
+            margin: 20px;
+            padding: 20px;
+            background: white;
+            border-radius: 15px;
+        }
+        .guide-item {
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+        }
+        button {
+            padding: 12px 24px;
+            margin: 5px;
+            font-family: 'Cairo', sans-serif;
+            font-size: 18px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+        #startBtn { background: #4CAF50; color: white; }
+        #stopBtn { background: #f44336; color: white; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>نظام كشف الحالة بإشارات اليد</h1>
+        <button id="startBtn">تشغيل الكاميرا</button>
+        <button id="stopBtn" style="display:none">إيقاف الكاميرا</button>
+        <div id="symbol"></div>
+        <div id="guide">
+            <div class="guide-item">🖐️ آمن: فتح جميع الأصابع</div>
+            <div class="guide-item">✊ خطر: قبضة مغلقة</div>
+        </div>
+    </div>
+    <canvas id="output"></canvas>
+    <video id="video" style="display: none"></video>
+
+    <script>
+        const videoElement = document.getElementById('video');
+        const canvasElement = document.getElementById('output');
+        const symbolDiv = document.getElementById('symbol');
+        const startBtn = document.getElementById('startBtn');
+        const stopBtn = document.getElementById('stopBtn');
+        const canvasCtx = canvasElement.getContext('2d');
+
+        function detectSymbol(landmarks) {
+            const fingerTips = [8, 12, 16, 20]; // Index, Middle, Ring, Pinky
+            const fingerBases = [5, 9, 13, 17]; // Corresponding bases
+            const thumbTip = 4;
+            const thumbBase = 2;
+
+            // Check if finger is raised
+            const isFingerRaised = (tipIdx, baseIdx) => 
+                landmarks[tipIdx].y < landmarks[baseIdx].y;
+
+            // Check if thumb is raised
+            const isThumbRaised = () => 
+                landmarks[thumbTip].x < landmarks[thumbBase].x;
+
+            // Check fingers state
+            const raisedFingers = fingerTips.map((tip, i) => 
+                isFingerRaised(tip, fingerBases[i]));
+            const thumbRaised = isThumbRaised();
+
+            // Danger signal - closed fist
+            if (!thumbRaised && !raisedFingers.some(f => f)) {
+                symbolDiv.className = 'danger';
+                return "✊ خطر";
+            }
+            // Safe signal - open palm
+            else if (raisedFingers.every(f => f) && thumbRaised) {
+                symbolDiv.className = 'safe';
+                return "🖐️ آمن";
+            }
+            
+            // Default - no clear signal
+            symbolDiv.className = '';
+            return "❓ غير محدد";
+        }
+
+        function onResults(results) {
+            canvasCtx.save();
+            canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+            canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+
+            if (results.multiHandLandmarks) {
+                for (const landmarks of results.multiHandLandmarks) {
+                    const symbol = detectSymbol(landmarks);
+                    symbolDiv.textContent = symbol;
+
+                    drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS,
+                        {color: '#00FF00', lineWidth: 5});
+                    drawLandmarks(canvasCtx, landmarks, {
+                        color: '#FF0000',
+                        lineWidth: 2,
+                        radius: 3
+                    });
+                }
+            } else {
+                symbolDiv.textContent = '';
+                symbolDiv.className = '';
+            }
+            canvasCtx.restore();
+        }
+
+        const hands = new Hands({
+            locateFile: (file) => {
+                return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+            }
+        });
+
+        hands.setOptions({
+            maxNumHands: 1,
+            modelComplexity: 1,
+            minDetectionConfidence: 0.7,
+            minTrackingConfidence: 0.7
+        });
+
+        hands.onResults(onResults);
+
+        startBtn.onclick = async () => {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+                videoElement.srcObject = stream;
+                videoElement.play();
+                startBtn.style.display = 'none';
+                stopBtn.style.display = 'inline-block';
+                
+                const camera = new Camera(videoElement, {
+                    onFrame: async () => {
+                        await hands.send({image: videoElement});
+                    },
+                    width: 1280,
+                    height: 720
+                });
+                camera.start();
+            } catch (error) {
+                console.error(error);
+                symbolDiv.textContent = 'خطأ في الوصول إلى الكاميرا';
+            }
+        };
+
+        stopBtn.onclick = () => {
+            const stream = videoElement.srcObject;
+            const tracks = stream.getTracks();
+            tracks.forEach(track => track.stop());
+            videoElement.srcObject = null;
+            startBtn.style.display = 'inline-block';
+            stopBtn.style.display = 'none';
+            canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+            symbolDiv.textContent = '';
+            symbolDiv.className = '';
+        };
+
+        canvasElement.width = 1280;
+        canvasElement.height = 720;
+    </script>
+</body>
+</html>
